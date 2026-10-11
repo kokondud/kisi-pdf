@@ -1,0 +1,39 @@
+name: Buat PDF produk
+on:
+  schedule:
+    - cron: "0 0 * * *"      # tiap hari 07.00 WIB (jadwal GitHub bisa mundur beberapa menit)
+  workflow_dispatch:          # tombol "Run workflow" untuk menjalankan kapan saja
+permissions:
+  contents: write
+concurrency: pdf
+jobs:
+  pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install playwright@1 && npx playwright install --with-deps chromium
+      - name: Buat PDF
+        run: node make-pdf.mjs
+      - name: Unggah (file bernama sama ditimpa, jadi tidak menumpuk)
+        if: always()
+        run: |
+          ls out/*.pdf >/dev/null 2>&1 || { echo "Tidak ada PDF baru, rilis tidak diubah."; exit 0; }
+          gh release view pdf >/dev/null 2>&1 || gh release create pdf --title "PDF produk" --notes "Dibuat otomatis tiap hari. File lama ditimpa."
+          gh release upload pdf out/*.pdf --clobber
+          if [ -f out/keep.txt ]; then
+            gh release view pdf --json assets -q '.assets[].name' | while read -r f; do
+              grep -qxF "$f" out/keep.txt || { echo "hapus $f (produk sudah tidak ada)"; gh release delete-asset pdf "$f" -y; }
+            done
+          fi
+      - name: Catat waktu jalan (juga menjaga jadwal tetap aktif)
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add status.txt && git commit -m "PDF $(date -u +%F)" && git push || true
